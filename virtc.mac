@@ -1,0 +1,192 @@
+; **********************************************************************
+; *                                                                    *
+; * VIRTC.MAC                                                          *
+; *                                                                    *
+; * BASIC VIRTC FUNCTIONS FOR ALTAIR. USES 88-VIRTC. STRAP 88-VIRTC:   *
+; *                                                                    *
+; *   RTC VI1                                                          *
+; *   RTC 100MS                                                        *
+; *                                                                    *
+; **********************************************************************
+;
+         .8080
+;
+RST1     EQU      8
+CURLEV   EQU      11
+;
+VIRTC    EQU      0FEH
+;
+; 2 1 0 - CURRENT LEVEL REGISTER
+;     3 - ENABLE CURRENT LEVEL REGISTER
+;     4 - RESET RTC INTERRUPT
+;     5 - CLEAR RTC COUNTER NETWORK
+;     6 - ENABLE RTC INTERRUPT
+;     7 - ENABLE VECTOR INTERRUPTS
+;
+         CSEG
+;
+; **********************************************************************
+; *                                                                    *
+; * RTCGET(L)                                                          *
+; * INTEGER*4 L                                                        *
+; *                                                                    *
+; * READ RTC TICK COUNT (TENTHS OF SECONDS, 32 BIT COUNTER)            *
+; *                                                                    *
+; * COPY 32 BIT TICK COUNTER AT TICKSL/TICKSH TO L.                    *
+; *                                                                    *
+; **********************************************************************
+;
+TICKSL:  DW       0
+TICKSH:  DW       0
+;
+         PUBLIC   RTCGET
+;
+RTCGET:  DI
+         XCHG
+         LHLD     TICKSL
+         XCHG
+         MOV      M,E
+         INX      H
+         MOV      M,D
+         INX      H
+         XCHG
+         LHLD     TICKSH
+         XCHG
+         MOV      M,E
+         INX      H
+         MOV      M,D       
+         EI
+         RET
+;
+; **********************************************************************
+; *                                                                    *
+; * RTCON - INITIALIZE VI/RTC                                          *
+; *                                                                    *
+; * SETS VECTOR RST1 (LOCATION 8) TO JUMP TO ISR (INTERRUPT SERVICE    *
+; * ROUTINE). INITIALIZES GLOBAL CURLEV (LOCATED JUST AFTER JMP) TO 0. *
+; * CLEAR THE TICK COUNTER TO 0, RESETS COUNTER CHAIN ON RTC, ENABLES  *
+; * VECTOR INTERRUPT AND RTC INTERRUPTS.                               *
+; *                                                                    *
+; **********************************************************************
+;
+         PUBLIC   RTCON
+;
+RTCON:   MVI      A,(JMP)
+         STA      RST1
+         LXI      H,ISR
+         SHLD     RST1+1
+         XRA      A
+         STA      CURLEV
+         MOV      H,A
+         MOV      L,A
+         SHLD     TICKSL
+         SHLD     TICKSH
+         MVI      A,0F0H
+         OUT      VIRTC
+         EI
+         RET
+;
+; **********************************************************************
+; *                                                                    *
+; * RTCOFF - DISABLE VI/RTC                                            *
+; *                                                                    *
+; * THIS JUST TURNS OFF THE VECTOR INTERRUPT AND RTC. RETURNS WITH     *
+; * INTERRUPTS DISABLED.                                               *
+; *                                                                    *
+; **********************************************************************
+;
+         PUBLIC   RTCOFF
+;
+RTCOFF:  DI
+         XRA      A
+         OUT      VIRTC
+         RET
+;
+; **********************************************************************
+; *                                                                    *
+; * INTEGER RTCTKS(DUMMY)                                              *
+; * INTEGER DUMMY                                                      *
+; *                                                                    *
+; * RETURN TICKS/SECOND FOR RTC (NORMALLY 10)                          *
+; *                                                                    *
+; **********************************************************************
+;
+         PUBLIC   RTCTKS
+;
+RTCTKS:  LXI      H,10
+         RET
+;
+; **********************************************************************
+; *                                                                    *
+; * ISR - INTERRUPT SERVICE ROUTINE FOR VI/RTC                         *
+; *                                                                    *
+; * INTERRUPT HANDLER USES 8 BYTES OF STACK. ACTION IS TO UPDATE THE   *
+; * 32 BIT TICK COUNTER. THIS IS USUALLY 1/10 OR 1/60 SECOND COUNTER.  *
+; *                                                                    *
+; **********************************************************************
+;
+ISR:     PUSH     PSW
+         PUSH     HL
+         LDA      CURLEV         ; PICK UP OLD LEVEL NUMBER
+         PUSH     PSW            ; SAVE IT ON THE STACK
+;
+; CURRENT LEVEL: FROM 88-VIRTC PAGE 5
+;
+;  LEVEL CURLEV
+;    0  -> 7 NOT USABLE WITH CP/M (WARM START)
+;    1  -> 6 RTC
+;    2  -> 5 NOT USABLE (YEAR/MONTH/DAY)
+;    3  -> 4
+;    4  -> 3
+;    5  -> 2
+;    6  -> 1
+;    7  -> 0 NOT USABLE WITH CP/M (DDT/DSD)
+;
+; REMEMBER TO ENABLE CURRENT LEVEL REGISTER. IF NO INTERRUPT, LEVEL 7
+; CAN ONLY OCCUR IF CURRENT LEVEL REGISTER IS DISABLED. THUS CURLEV
+; IS 0 INITIALLY.
+;
+         MVI      A,8+6          ; ENABLE CURRENT LEVEL + NEW LEVEL
+         STA      CURLEV         ; STORE THIS AS THE NEW CURRENT LEVEL
+         ORI      0C0H+10H       ; OR IN RESET RTC AND VI
+         OUT      VIRTC          ; CLEAR RTC INTERRUPT
+         EI                      ; CAN BE INTERRUPTED BY HIGHER LEVEL
+;
+; 10 TICKS PER SECOND: 32 BIT COUNTER GIVES OVER 10 YEARS OF OPERATION
+;
+; (NOTE THAT WE ONLY HANDLE HIGHER INTERRUPTS NOW SO WE DON'T NEED TO
+; PROTECT THE 32 BIT INCREMENT -- UNLIKE RTCGET WHERE WE ARE RUNNING
+; AT USER LEVEL, AND COULD GET AN RTC INTERRUPT BETWEEN LOADING TICKSL
+; AND TICKSH)
+;
+         LHLD     TICKSL         ; INCREMENT LOW 16 BITS
+         INX      H
+         SHLD     TICKSL
+         MOV      A,H            ; IF NOT ZERO, DONE
+         ORA      L
+         JNZ      TICKS2
+         LHLD     TICKSH         ; OTHERWISE, INCREMENT HIGH 16 BITS
+         INX      H
+         SHLD     TICKSH
+TICKS2:  DI
+         POP      PSW            ; RESTORE CURRENT LEVEL
+         STA      CURLEV
+         ORI      0C0H           ; ENABLE VI AND RTC INTERRUPT
+         OUT      VIRTC          ; OUTPUT CURRENT LEVEL TO VI BOARD
+         POP      HL
+         POP      PSW
+;
+; ISR HOOK - THIS ALLOWS THE EXIT BEHAVIOUR OF ISR TO BE ALTERED.
+; THERE ARE 3 BYTES AT RTCISX THAT CAN MODIFY THE EXIT BEHAVIOUR
+; OF THE RTC INTERUPT SERVICE ROUTINE. THE RTC ISR NORMALLY JUST
+; UPDATES THE TICK COUNTER, BUT THIS ALLOWS CATCHING THE ISR
+; EXIT FOR PREEMPTIVE SCHEDULING (OR OTHER USES).
+;
+         PUBLIC   RTCISX
+;
+RTCISX:  EI                      ; ENABLE INTERRUPTS AND RETURN
+         RET
+         NOP
+;
+         END
+

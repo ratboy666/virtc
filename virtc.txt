@@ -1,0 +1,56 @@
+VIRTC.TXT
+
+
+Introduction ==================================================================
+
+
+VIRTC.REL is a library supporting the 88-VIRTC. This is vector
+interrupts and real time clock interrupts. The 88-VIRTC can be
+strapped to support interrupts from various device at any of 8
+levels. VIRTC.REL should ha e the 88-VIRTC strapped to have the
+RTC at level 1, and at either 10 or 60 interrupts per second.
+
+Use and Linking ===============================================================
+
+
+RTC.FOR is an example of the use of VIRTC:
+
+  F80 =RTC
+  L80 RTC,VIRTC/S,FORLIB/S,RTC/N/Y/E
+
+will compile and link RTC.FOR.
+
+The tick counter is 4 bytes, and gives 13 (or so) years at 10
+ticks per second.
+
+
+Routines ======================================================================
+
+      EXTERNAL RTCON,RTCOFF,RTCGET,$DI,$EI,RTCTKS
+      INTEGER RTCTKS
+
+
+Detail ========================================================================
+
+
+FUNCTION RTCTKS(DUMMY)       Returns ticks per second
+    INTEGER RTCTKS           DUMMY is not used
+    INTEGER DUMMY
+
+SUBROUTINE RTCGET(L)         Return current ticks
+    INTEGER*4 L
+
+SUBROUTINE RTCON             Enable RTC interrupts
+
+SUBROUTINE RTCOFF            Disable RTC interrupts
+
+SUBROUTINE $EI               Enable interrupts
+
+SUBROUTINE $DI               Disable interrupts
+    REAL MKSTR$              This seriously leaks the implementation as does
+    INTEGER OFF,LEN          STROFF
+
+RTCISX                       EI/RET/NOP patch point for the interrupt
+                             service routine.
+
+
